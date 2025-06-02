@@ -1,11 +1,12 @@
 package router
 
 import (
+	"github.com/juven0/Velocity/types"
 	"github.com/juven0/Velocity/velocity"
 	"github.com/valyala/fasthttp"
 )
 
-type HandlerFunc = velocity.HandlerFunc
+type HandlerFunc = types.HandlerFunc
 
 type Router struct {
 	routes map[string]map[string]HandlerFunc
