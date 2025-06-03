@@ -25,6 +25,10 @@ func New() *Router {
 	return &Router{trees: map[string]*node{}}
 }
 
+func (r *Router) Groupe(path string) {
+	``
+}
+
 func (r *Router) Handel(method string, path string, handler HandlerFunc) {
 	if path == "" || path[0] != '/' {
 		panic("path must start with '/'")
