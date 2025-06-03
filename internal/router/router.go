@@ -2,7 +2,6 @@ package router
 
 import (
 	"github.com/juven0/Velocity/types"
-	"github.com/juven0/Velocity/velocity"
 	"github.com/valyala/fasthttp"
 )
 
@@ -28,7 +27,7 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 		method := string(ctx.Method())
 		path := string(ctx.Method())
 		if h, ok := r.routes[method][path]; ok {
-			h(&velocity.Context{RequestCtx: ctx})
+			h(&types.Context{RequestCtx: ctx})
 			return
 		}
 		ctx.Error("Not Found", fasthttp.StatusNotFound)

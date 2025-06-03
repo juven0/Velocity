@@ -1,7 +1,7 @@
 package velocity
 
 import (
-	"github.com/juven0/Velocity/router"
+	"github.com/juven0/Velocity/internal/router"
 	"github.com/juven0/Velocity/types"
 
 	"github.com/valyala/fasthttp"
@@ -9,7 +9,7 @@ import (
 
 type App struct {
 	router      *router.Router
-	middlewares []HandlerFunc
+	middlewares []types.HandlerFunc
 }
 
 func New() *App {
@@ -24,16 +24,16 @@ func (a *App) Use(mw types.HandlerFunc) {
 }
 
 func (a *App) Get(path string, handler types.HandlerFunc) {
-	a.router.Handle("GET", path, a.chain(handler))
+	a.router.Handel("GET", path, a.chain(handler))
 }
 
 func (a *App) chain(final types.HandlerFunc) (types.HandlerFunc) {
-	return func(ctx *Context) error {
+	return func(ctx *types.Context) error {
 		h := final
 		for i := len(a.middlewares) - 1; i >= 0; i-- {
 			next := h
 			mw := a.middlewares[i]
-			h = func(c *Context) error {
+			h = func(c *types.Context) error {
 				return mw(c.WithNext(next))
 			}
 		}

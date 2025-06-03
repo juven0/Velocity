@@ -1,7 +1,6 @@
-package velocity
+package types
 
 import (
-	"Velocity/types"
 	"encoding/json"
 
 	"github.com/valyala/fasthttp"
@@ -9,7 +8,7 @@ import (
 
 type Context struct {
 	*fasthttp.RequestCtx
-	next types.HandlerFunc
+	next HandlerFunc
 }
 
 func (c *Context) Text(msg string) error {
@@ -28,7 +27,7 @@ func (c *Context) JSON(v interface{}) error {
 	return nil
 }
 
-func (c *Context) WithNext(next types.HandlerFunc) *Context {
+func (c *Context) WithNext(next HandlerFunc) *Context {
 	return &Context{RequestCtx: c.RequestCtx, next: next}
 }
 
