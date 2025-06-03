@@ -38,3 +38,37 @@ func (c *Context) Next() error {
 
 	return nil
 }
+
+func (c *Context) SetStatus(code int) {
+	c.SetStatusCode(code)
+}
+
+func (c *Context) Query(key string) string {
+	return string(c.QueryArgs().Peek(key))
+}
+
+// func (c *Context) Param(key string)
+func (c *Context) FormValue(key string) string {
+	return ""
+}
+
+func (c *Context) SetHeader(key, value string) {
+	c.Response.Header.Set(key, value)
+}
+
+func (c *Context) Redirect(url string, code int) {
+	c.Response.Header.Set("Location", url)
+	c.SetStatusCode(code)
+}
+
+func (c *Context) Body() []byte {
+	return c.Request.Body()
+}
+
+func (c *Context) BodyString() string {
+	return string(c.Request.Body())
+}
+
+func (c *Context) BindJSON(v interface{}) error {
+	return json.Unmarshal(c.Body(), v)
+}
