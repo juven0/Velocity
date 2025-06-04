@@ -21,12 +21,25 @@ type Router struct {
 	trees map[string]*node
 }
 
+type Groupe struct {
+	prefix string
+	router *Router
+}
+
 func New() *Router {
 	return &Router{trees: map[string]*node{}}
 }
 
-func (r *Router) Groupe(path string) {
-	``
+func (r *Router) Groupe(prefix string) *Groupe {
+	return &Groupe{
+		prefix: prefix,
+		router: r,
+	}
+}
+
+func (g *Groupe) Handel(method string, path string, handler HandlerFunc) {
+	fullPath := g.prefix + path
+	g.router.Handel(method, fullPath, handler)
 }
 
 func (r *Router) Handel(method string, path string, handler HandlerFunc) {
