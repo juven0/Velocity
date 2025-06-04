@@ -66,5 +66,6 @@ func (a *App) chain(final types.HandlerFunc) types.HandlerFunc {
 }
 
 func (a *App) Listen(addr string) error {
+	printBanner(addr)
 	return fasthttp.ListenAndServe(addr, a.router.Handler())
 }
