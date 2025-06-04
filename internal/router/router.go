@@ -56,7 +56,6 @@ func (r *Router) Handel(method string, path string, handler HandlerFunc) {
 
 	for _, part := range parts {
 		var child *node
-
 		for _, c := range current.children {
 			if c.part == part || c.param || c.wildcard {
 				child = c
@@ -64,7 +63,6 @@ func (r *Router) Handel(method string, path string, handler HandlerFunc) {
 			}
 		}
 		if child == nil {
-			child := &node{part: part}
 			child = &node{part: part}
 			if strings.HasPrefix(part, ":") {
 				child.param = true
@@ -73,6 +71,7 @@ func (r *Router) Handel(method string, path string, handler HandlerFunc) {
 			}
 			current.children = append(current.children, child)
 		}
+		current = child
 	}
 	current.handler = handler
 }

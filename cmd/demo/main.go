@@ -8,7 +8,7 @@ import (
 func main() {
 	app := velocity.New()
 
-	app.Get("/", func(ctx *types.Context) error {
+	app.Get("/demo", func(ctx *types.Context) error {
 		return ctx.Text("Hello, World!")
 	})
 

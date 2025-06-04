@@ -24,10 +24,10 @@ func (a *App) Use(mw types.HandlerFunc) {
 }
 
 func (a *App) Get(path string, handler types.HandlerFunc) {
-	a.router.Handel("GET", path, a.chain(handler))
+	a.router.Handel("GET", path, handler)
 }
 
-func (a *App) chain(final types.HandlerFunc) (types.HandlerFunc) {
+func (a *App) chain(final types.HandlerFunc) types.HandlerFunc {
 	return func(ctx *types.Context) error {
 		h := final
 		for i := len(a.middlewares) - 1; i >= 0; i-- {
