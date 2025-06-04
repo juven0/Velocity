@@ -47,7 +47,7 @@ func (c *Context) Query(key string) string {
 	return string(c.QueryArgs().Peek(key))
 }
 
-func (c *Context) Params(key string) string {
+func (c *Context) Param(key string) string {
 	params, ok := c.UserValue("params").(map[string]string)
 	if !ok {
 		return ""
