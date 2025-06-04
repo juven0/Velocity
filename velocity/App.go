@@ -27,6 +27,30 @@ func (a *App) Get(path string, handler types.HandlerFunc) {
 	a.router.Handel("GET", path, handler)
 }
 
+func (a *App) Post(path string, handler types.HandlerFunc) {
+	a.router.Handel("POST", path, handler)
+}
+
+func (a *App) Put(path string, handler types.HandlerFunc) {
+	a.router.Handel("PUT", path, handler)
+}
+
+func (a *App) Delete(path string, handler types.HandlerFunc) {
+	a.router.Handel("DELETE", path, handler)
+}
+
+func (a *App) Patch(path string, handler types.HandlerFunc) {
+	a.router.Handel("PATCH", path, handler)
+}
+
+func (a *App) Options(path string, handler types.HandlerFunc) {
+	a.router.Handel("OPTIONS", path, handler)
+}
+
+func (a *App) Head(path string, handler types.HandlerFunc) {
+	a.router.Handel("HEAD", path, handler)
+}
+
 func (a *App) chain(final types.HandlerFunc) types.HandlerFunc {
 	return func(ctx *types.Context) error {
 		h := final

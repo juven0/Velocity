@@ -47,9 +47,16 @@ func (c *Context) Query(key string) string {
 	return string(c.QueryArgs().Peek(key))
 }
 
-// func (c *Context) Param(key string)
+func (c *Context) Params(key string) string {
+	params, ok := c.UserValue("params").(map[string]string)
+	if !ok {
+		return ""
+	}
+	return params[key]
+}
+
 func (c *Context) FormValue(key string) string {
-	return ""
+	return string(c.RequestCtx.FormValue(key))
 }
 
 func (c *Context) SetHeader(key, value string) {

@@ -32,6 +32,7 @@ func New() *Router {
 
 func (r *Router) Groupe(prefix string) *Groupe {
 	return &Groupe{
+					fmt.Println(c.handler)
 		prefix: prefix,
 		router: r,
 	}
