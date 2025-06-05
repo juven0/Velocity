@@ -2,7 +2,9 @@ package router
 
 import (
 	"strings"
+	"unsafe"
 
+	"github.com/juven0/Velocity/internal/core"
 	"github.com/juven0/Velocity/types"
 	"github.com/valyala/fasthttp"
 )
@@ -24,6 +26,10 @@ type Router struct {
 type Groupe struct {
 	prefix string
 	router *Router
+}
+
+func bytesToString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
 }
 
 func New() *Router {
@@ -79,7 +85,8 @@ func (r *Router) Handel(method string, path string, handler HandlerFunc) {
 func (r *Router) Handler() fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
 		method := string(ctx.Method())
-		path := string(ctx.Path())
+		pathBytes := ctx.Path()
+		path := bytesToString(pathBytes)
 
 		parts := strings.Split(strings.Trim(path, "/"), "/")
 		n := r.trees[method]
@@ -106,7 +113,8 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 		}
 
 		if n.handler != nil {
-			c := &types.Context{RequestCtx: ctx}
+			c := core.GetContext(ctx)
+			defer core.ReleasContext(c)
 			ctx.SetUserValue("params", params)
 			n.handler(c)
 		} else {
