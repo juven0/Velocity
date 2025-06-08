@@ -38,10 +38,10 @@ func New() *App {
 
 func defaultConfig() *ServerConfig {
 	return &ServerConfig{
-		ReadBufferSize:                4096,
-		WriteBufferSize:               4096,
+		ReadBufferSize:                16384,
+		WriteBufferSize:               16384,
 		MaxRequestBodySize:            1024 * 1024,
-		Concurrency:                   256 * 1024,
+		Concurrency:                   1024 * 1024,
 		DisableKeepalive:              false,
 		DisableHeaderNamesNormalizing: true,
 		ReadTimeout:                   10 * time.Second,
