@@ -9,12 +9,11 @@ import (
 )
 
 type node struct {
-	part     string
-	children []*node
-	handler  HandlerFunc
-	param    bool
-	wildcard bool
-	// Optimisation: index des enfants pour recherche rapide
+	part           string
+	children       []*node
+	handler        HandlerFunc
+	param          bool
+	wildcard       bool
 	staticChildren map[string]*node
 	paramChild     *node
 	wildcardChild  *node
@@ -31,14 +30,12 @@ type Groupe struct {
 	router *Router
 }
 
-// Pool pour réutiliser les maps de paramètres
 var paramsPool = sync.Pool{
 	New: func() interface{} {
 		return make(map[string]string, 8)
 	},
 }
 
-// Pool pour réutiliser les slices de parties
 var partsPool = sync.Pool{
 	New: func() interface{} {
 		return make([]string, 0, 8)
@@ -72,7 +69,6 @@ func (r *Router) Handel(method string, path string, handler HandlerFunc) {
 		}
 	}
 
-	// Optimisation: éviter strings.Split quand possible
 	parts := r.splitPath(path[1:])
 	current := r.trees[method]
 
@@ -113,12 +109,10 @@ func (r *Router) findOrCreateChild(parent *node, part string) *node {
 		parent.staticChildren = make(map[string]*node)
 	}
 
-	// Vérifier les enfants statiques d'abord
 	if child, exists := parent.staticChildren[part]; exists {
 		return child
 	}
 
-	// Vérifier les paramètres
 	if strings.HasPrefix(part, ":") {
 		if parent.paramChild != nil {
 			return parent.paramChild
@@ -133,7 +127,6 @@ func (r *Router) findOrCreateChild(parent *node, part string) *node {
 		return child
 	}
 
-	// Vérifier les wildcards
 	if part == "*" {
 		if parent.wildcardChild != nil {
 			return parent.wildcardChild
@@ -148,7 +141,6 @@ func (r *Router) findOrCreateChild(parent *node, part string) *node {
 		return child
 	}
 
-	// Créer un enfant statique
 	child := &node{
 		part:           part,
 		staticChildren: make(map[string]*node),
@@ -163,7 +155,6 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 		method := ctx.Method()
 		path := ctx.Path()
 
-		// Conversion en string une seule fois
 		methodStr := string(method)
 
 		n := r.trees[methodStr]
@@ -172,7 +163,6 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 			return
 		}
 
-		// Cas spécial pour la racine
 		if len(path) <= 1 {
 			if n.handler != nil {
 				c := &types.Context{RequestCtx: ctx}
@@ -183,11 +173,9 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 			return
 		}
 
-		// Récupérer une map de paramètres du pool
 		params := paramsPool.Get().(map[string]string)
 		defer r.releaseParams(params)
 
-		// Parsing optimisé du chemin
 		matched := r.matchPath(n, path[1:], params)
 		if matched == nil || matched.handler == nil {
 			ctx.Error("Not Found", fasthttp.StatusNotFound)
@@ -203,7 +191,6 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 }
 
 func (r *Router) releaseParams(params map[string]string) {
-	// Nettoyer la map avant de la remettre dans le pool
 	for k := range params {
 		delete(params, k)
 	}
@@ -215,7 +202,6 @@ func (r *Router) matchPath(n *node, path []byte, params map[string]string) *node
 		return n
 	}
 
-	// Trouver le prochain segment
 	segmentEnd := 0
 	for segmentEnd < len(path) && path[segmentEnd] != '/' {
 		segmentEnd++
@@ -224,24 +210,21 @@ func (r *Router) matchPath(n *node, path []byte, params map[string]string) *node
 	segment := path[:segmentEnd]
 	remaining := path[segmentEnd:]
 	if len(remaining) > 0 {
-		remaining = remaining[1:] // enlever le '/'
+		remaining = remaining[1:]
 	}
 
 	segmentStr := string(segment)
 
-	// 1. Recherche exacte (plus rapide)
 	if child, exists := n.staticChildren[segmentStr]; exists {
 		return r.matchPath(child, remaining, params)
 	}
 
-	// 2. Paramètre
 	if n.paramChild != nil {
-		paramName := n.paramChild.part[1:] // enlever le ':'
+		paramName := n.paramChild.part[1:]
 		params[paramName] = segmentStr
 		return r.matchPath(n.paramChild, remaining, params)
 	}
 
-	// 3. Wildcard (capture tout le reste)
 	if n.wildcardChild != nil {
 		params["*"] = string(path)
 		return n.wildcardChild
@@ -250,7 +233,6 @@ func (r *Router) matchPath(n *node, path []byte, params map[string]string) *node
 	return nil
 }
 
-// Méthodes de convenance pour HTTP
 func (r *Router) GET(path string, handler HandlerFunc) {
 	r.Handel("GET", path, handler)
 }
@@ -279,7 +261,6 @@ func (r *Router) HEAD(path string, handler HandlerFunc) {
 	r.Handel("HEAD", path, handler)
 }
 
-// Méthodes pour les groupes
 func (g *Groupe) GET(path string, handler HandlerFunc) {
 	g.Handel("GET", path, handler)
 }
