@@ -32,6 +32,7 @@ func New() *App {
 	return &App{
 		router:      router.New(),
 		middlewares: []types.HandlerFunc{},
+		config:      defaultConfig(),
 	}
 }
 
