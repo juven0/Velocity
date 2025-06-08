@@ -3,6 +3,7 @@ package router
 import (
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/juven0/Velocity/types"
 	"github.com/valyala/fasthttp"
@@ -17,12 +18,21 @@ type node struct {
 	staticChildren map[string]*node
 	paramChild     *node
 	wildcardChild  *node
+	isLeaf         bool
 }
 
 type HandlerFunc = types.HandlerFunc
 
 type Router struct {
-	trees map[string]*node
+	trees      map[string]*node
+	routeCache map[string]*routeCacheEntry
+	cacheMu    sync.RWMutex
+	cacheSize  int
+}
+
+type routeCacheEntry struct {
+	node   *node
+	params map[string]string
 }
 
 type Groupe struct {
@@ -30,20 +40,34 @@ type Groupe struct {
 	router *Router
 }
 
-var paramsPool = sync.Pool{
-	New: func() interface{} {
-		return make(map[string]string, 8)
-	},
-}
+var (
+	paramsPool = sync.Pool{
+		New: func() interface{} {
+			return make(map[string]string, 4)
+		},
+	}
 
-var partsPool = sync.Pool{
-	New: func() interface{} {
-		return make([]string, 0, 8)
-	},
-}
+	pathPool = sync.Pool{
+		New: func() interface{} {
+			return make([]string, 0, 8)
+		},
+	}
+
+	cacheEntryPool = sync.Pool{
+		New: func() interface{} {
+			return &routeCacheEntry{
+				params: make(map[string]string, 4),
+			}
+		},
+	}
+)
 
 func New() *Router {
-	return &Router{trees: make(map[string]*node, 8)}
+	return &Router{
+		trees:      make(map[string]*node, 16),
+		routeCache: make(map[string]*routeCacheEntry, 1024),
+		cacheSize:  1024,
+	}
 }
 
 func (r *Router) Groupe(prefix string) *Groupe {
@@ -65,11 +89,11 @@ func (r *Router) Handel(method string, path string, handler HandlerFunc) {
 
 	if r.trees[method] == nil {
 		r.trees[method] = &node{
-			staticChildren: make(map[string]*node),
+			staticChildren: make(map[string]*node, 8),
 		}
 	}
 
-	parts := r.splitPath(path[1:])
+	parts := r.fastSplitPath(path[1:])
 	current := r.trees[method]
 
 	for _, part := range parts {
@@ -77,23 +101,25 @@ func (r *Router) Handel(method string, path string, handler HandlerFunc) {
 		current = child
 	}
 	current.handler = handler
+	current.isLeaf = true
 
-	// Libérer le slice des parties
 	parts = parts[:0]
-	partsPool.Put(parts)
+	pathPool.Put(parts)
 }
 
-func (r *Router) splitPath(path string) []string {
+func (r *Router) fastSplitPath(path string) []string {
 	if path == "" {
 		return []string{}
 	}
 
-	parts := partsPool.Get().([]string)
+	parts := pathPool.Get().([]string)
 	parts = parts[:0]
 
+	pathBytes := *(*[]byte)(unsafe.Pointer(&path))
+
 	start := 0
-	for i := 0; i <= len(path); i++ {
-		if i == len(path) || path[i] == '/' {
+	for i := 0; i <= len(pathBytes); i++ {
+		if i == len(pathBytes) || pathBytes[i] == '/' {
 			if i > start {
 				parts = append(parts, path[start:i])
 			}
@@ -106,7 +132,7 @@ func (r *Router) splitPath(path string) []string {
 
 func (r *Router) findOrCreateChild(parent *node, part string) *node {
 	if parent.staticChildren == nil {
-		parent.staticChildren = make(map[string]*node)
+		parent.staticChildren = make(map[string]*node, 4)
 	}
 
 	if child, exists := parent.staticChildren[part]; exists {
@@ -120,7 +146,7 @@ func (r *Router) findOrCreateChild(parent *node, part string) *node {
 		child := &node{
 			part:           part,
 			param:          true,
-			staticChildren: make(map[string]*node),
+			staticChildren: make(map[string]*node, 4),
 		}
 		parent.paramChild = child
 		parent.children = append(parent.children, child)
@@ -134,7 +160,7 @@ func (r *Router) findOrCreateChild(parent *node, part string) *node {
 		child := &node{
 			part:           part,
 			wildcard:       true,
-			staticChildren: make(map[string]*node),
+			staticChildren: make(map[string]*node, 4),
 		}
 		parent.wildcardChild = child
 		parent.children = append(parent.children, child)
@@ -143,7 +169,7 @@ func (r *Router) findOrCreateChild(parent *node, part string) *node {
 
 	child := &node{
 		part:           part,
-		staticChildren: make(map[string]*node),
+		staticChildren: make(map[string]*node, 4),
 	}
 	parent.staticChildren[part] = child
 	parent.children = append(parent.children, child)
@@ -155,7 +181,25 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 		method := ctx.Method()
 		path := ctx.Path()
 
-		methodStr := string(method)
+		methodStr := bytesToString(method)
+		pathStr := bytesToString(path)
+
+		cacheKey := methodStr + ":" + pathStr
+
+		r.cacheMu.RLock()
+		if cached, exists := r.routeCache[cacheKey]; exists {
+			r.cacheMu.RUnlock()
+
+			if cached.node != nil && cached.node.handler != nil {
+				c := &types.Context{RequestCtx: ctx}
+				if len(cached.params) > 0 {
+					ctx.SetUserValue("params", cached.params)
+				}
+				cached.node.handler(c)
+				return
+			}
+		}
+		r.cacheMu.RUnlock()
 
 		n := r.trees[methodStr]
 		if n == nil {
@@ -167,6 +211,8 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 			if n.handler != nil {
 				c := &types.Context{RequestCtx: ctx}
 				n.handler(c)
+				// Mettre en cache
+				r.cacheRoute(cacheKey, n, nil)
 				return
 			}
 			ctx.Error("Not Found", fasthttp.StatusNotFound)
@@ -176,7 +222,7 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 		params := paramsPool.Get().(map[string]string)
 		defer r.releaseParams(params)
 
-		matched := r.matchPath(n, path[1:], params)
+		matched := r.matchPathOptimized(n, path[1:], params)
 		if matched == nil || matched.handler == nil {
 			ctx.Error("Not Found", fasthttp.StatusNotFound)
 			return
@@ -186,18 +232,16 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 		if len(params) > 0 {
 			ctx.SetUserValue("params", params)
 		}
+
+		if len(params) == 0 {
+			r.cacheRoute(cacheKey, matched, nil)
+		}
+
 		matched.handler(c)
 	}
 }
 
-func (r *Router) releaseParams(params map[string]string) {
-	for k := range params {
-		delete(params, k)
-	}
-	paramsPool.Put(params)
-}
-
-func (r *Router) matchPath(n *node, path []byte, params map[string]string) *node {
+func (r *Router) matchPathOptimized(n *node, path []byte, params map[string]string) *node {
 	if len(path) == 0 {
 		return n
 	}
@@ -213,24 +257,59 @@ func (r *Router) matchPath(n *node, path []byte, params map[string]string) *node
 		remaining = remaining[1:]
 	}
 
-	segmentStr := string(segment)
+	segmentStr := bytesToString(segment)
 
 	if child, exists := n.staticChildren[segmentStr]; exists {
-		return r.matchPath(child, remaining, params)
+		return r.matchPathOptimized(child, remaining, params)
 	}
 
 	if n.paramChild != nil {
 		paramName := n.paramChild.part[1:]
 		params[paramName] = segmentStr
-		return r.matchPath(n.paramChild, remaining, params)
+		return r.matchPathOptimized(n.paramChild, remaining, params)
 	}
 
 	if n.wildcardChild != nil {
-		params["*"] = string(path)
+		params["*"] = bytesToString(path)
 		return n.wildcardChild
 	}
 
 	return nil
+}
+
+func (r *Router) cacheRoute(key string, node *node, params map[string]string) {
+	r.cacheMu.Lock()
+	defer r.cacheMu.Unlock()
+
+	if len(r.routeCache) >= r.cacheSize {
+		// Simple éviction: supprimer une entrée aléatoire
+		for k := range r.routeCache {
+			delete(r.routeCache, k)
+			break
+		}
+	}
+
+	entry := cacheEntryPool.Get().(*routeCacheEntry)
+	entry.node = node
+
+	if len(params) > 0 {
+		for k, v := range params {
+			entry.params[k] = v
+		}
+	}
+
+	r.routeCache[key] = entry
+}
+
+func (r *Router) releaseParams(params map[string]string) {
+	for k := range params {
+		delete(params, k)
+	}
+	paramsPool.Put(params)
+}
+
+func bytesToString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
 }
 
 func (r *Router) GET(path string, handler HandlerFunc) {
@@ -261,6 +340,7 @@ func (r *Router) HEAD(path string, handler HandlerFunc) {
 	r.Handel("HEAD", path, handler)
 }
 
+// Méthodes pour les groupes
 func (g *Groupe) GET(path string, handler HandlerFunc) {
 	g.Handel("GET", path, handler)
 }
