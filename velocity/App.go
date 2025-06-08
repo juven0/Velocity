@@ -1,6 +1,9 @@
 package velocity
 
 import (
+	"log"
+	"time"
+
 	"github.com/juven0/Velocity/internal/router"
 	"github.com/juven0/Velocity/types"
 
@@ -10,6 +13,19 @@ import (
 type App struct {
 	router      *router.Router
 	middlewares []types.HandlerFunc
+	config      *ServerConfig
+}
+
+type ServerConfig struct {
+	ReadBufferSize                int
+	WriteBufferSize               int
+	MaxRequestBodySize            int
+	Concurrency                   int
+	DisableKeepalive              bool
+	DisableHeaderNamesNormalizing bool
+	ReadTimeout                   time.Duration
+	WriteTimeout                  time.Duration
+	IdleTimeout                   time.Duration
 }
 
 func New() *App {
@@ -17,6 +33,24 @@ func New() *App {
 		router:      router.New(),
 		middlewares: []types.HandlerFunc{},
 	}
+}
+
+func defaultConfig() *ServerConfig {
+	return &ServerConfig{
+		ReadBufferSize:                4096,
+		WriteBufferSize:               4096,
+		MaxRequestBodySize:            1024 * 1024,
+		Concurrency:                   256 * 1024,
+		DisableKeepalive:              false,
+		DisableHeaderNamesNormalizing: true,
+		ReadTimeout:                   10 * time.Second,
+		WriteTimeout:                  10 * time.Second,
+		IdleTimeout:                   120 * time.Second,
+	}
+}
+
+func (a *App) Config() *ServerConfig {
+	return a.config
 }
 
 func (a *App) Use(mw types.HandlerFunc) {
@@ -52,20 +86,60 @@ func (a *App) Head(path string, handler types.HandlerFunc) {
 }
 
 func (a *App) chain(final types.HandlerFunc) types.HandlerFunc {
+	if len(a.middlewares) == 0 {
+		return final
+	}
+
 	return func(ctx *types.Context) error {
-		h := final
-		for i := len(a.middlewares) - 1; i >= 0; i-- {
-			next := h
-			mw := a.middlewares[i]
-			h = func(c *types.Context) error {
-				return mw(c.WithNext(next))
+		var index int
+
+		var next func() error
+		next = func() error {
+			if index >= len(a.middlewares) {
+				return final(ctx)
 			}
+			middleware := a.middlewares[index]
+			index++
+
+			ctxWithNext := ctx.WithNext(func(*types.Context) error {
+				return next()
+			})
+
+			return middleware(ctxWithNext)
 		}
-		return h(ctx)
+
+		return next()
+	}
+}
+
+func (a *App) Handler() fasthttp.RequestHandler {
+	routerHandler := a.router.Handler()
+
+	return func(ctx *fasthttp.RequestCtx) {
+		ctx.Response.Header.SetServer("Velocity")
+
+		routerHandler(ctx)
 	}
 }
 
 func (a *App) Listen(addr string) error {
 	printBanner(addr)
-	return fasthttp.ListenAndServe(addr, a.router.Handler())
+
+	server := &fasthttp.Server{
+		Handler:                       a.Handler(),
+		DisableKeepalive:              a.config.DisableKeepalive,
+		ReadBufferSize:                a.config.ReadBufferSize,
+		WriteBufferSize:               a.config.WriteBufferSize,
+		MaxRequestBodySize:            a.config.MaxRequestBodySize,
+		Concurrency:                   a.config.Concurrency,
+		DisableHeaderNamesNormalizing: a.config.DisableHeaderNamesNormalizing,
+		ReadTimeout:                   a.config.ReadTimeout,
+		WriteTimeout:                  a.config.WriteTimeout,
+		IdleTimeout:                   a.config.IdleTimeout,
+		ReduceMemoryUsage:             false,
+		TCPKeepalive:                  true,
+	}
+
+	log.Printf("Server starting on %s with %d max goroutines", addr, a.config.Concurrency)
+	return server.ListenAndServe(addr)
 }
