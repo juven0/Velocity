@@ -1,6 +1,7 @@
 package router
 
 import (
+	"hash/fnv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -8,6 +9,103 @@ import (
 	"github.com/juven0/Velocity/types"
 	"github.com/valyala/fasthttp"
 )
+
+// === NOUVELLES STRUCTURES OPTIMISÉES ===
+
+// FixedParams remplace map[string]string pour éviter les allocations
+type FixedParams struct {
+	keys   [8]string
+	values [8]string
+	count  int
+}
+
+func (fp *FixedParams) Set(key, value string) {
+	if fp.count < 8 {
+		fp.keys[fp.count] = key
+		fp.values[fp.count] = value
+		fp.count++
+	}
+}
+
+func (fp *FixedParams) Get(key string) (string, bool) {
+	for i := 0; i < fp.count; i++ {
+		if fp.keys[i] == key {
+			return fp.values[i], true
+		}
+	}
+	return "", false
+}
+
+func (fp *FixedParams) Reset() {
+	fp.count = 0
+	// Pas besoin de clear les arrays, on utilise count
+}
+
+func (fp *FixedParams) ToMap() map[string]string {
+	if fp.count == 0 {
+		return nil
+	}
+	m := make(map[string]string, fp.count)
+	for i := 0; i < fp.count; i++ {
+		m[fp.keys[i]] = fp.values[i]
+	}
+	return m
+}
+
+// lockFreeCache remplace le cache avec mutex
+type lockFreeCache struct {
+	entries [1024]*routeCacheEntry
+	mask    uint32
+}
+
+type routeCacheEntry struct {
+	key    string
+	node   *node
+	params *FixedParams
+}
+
+func newLockFreeCache() *lockFreeCache {
+	return &lockFreeCache{
+		mask: 1023, // 1024 - 1
+	}
+}
+
+func (lfc *lockFreeCache) Get(key string) (*routeCacheEntry, bool) {
+	hash := hashString(key)
+	idx := hash & lfc.mask
+	entry := lfc.entries[idx]
+	if entry != nil && entry.key == key {
+		return entry, true
+	}
+	return nil, false
+}
+
+func (lfc *lockFreeCache) Set(key string, node *node, params *FixedParams) {
+	hash := hashString(key)
+	idx := hash & lfc.mask
+
+	entry := &routeCacheEntry{
+		key:  key,
+		node: node,
+	}
+
+	// Copier les params si nécessaires
+	if params != nil && params.count > 0 {
+		entry.params = &FixedParams{}
+		*entry.params = *params
+	}
+
+	lfc.entries[idx] = entry
+}
+
+// Fonction de hash simple et rapide
+func hashString(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
+}
+
+// === STRUCTURES EXISTANTES MODIFIÉES ===
 
 type node struct {
 	part           string
@@ -24,15 +122,9 @@ type node struct {
 type HandlerFunc = types.HandlerFunc
 
 type Router struct {
-	trees      map[string]*node
-	routeCache map[string]*routeCacheEntry
-	cacheMu    sync.RWMutex
-	cacheSize  int
-}
-
-type routeCacheEntry struct {
-	node   *node
-	params map[string]string
+	trees     map[string]*node
+	cache     *lockFreeCache // Remplace routeCache + cacheMu
+	cacheSize int
 }
 
 type Groupe struct {
@@ -40,10 +132,20 @@ type Groupe struct {
 	router *Router
 }
 
+// === POOLS OPTIMISÉS ===
+
 var (
-	paramsPool = sync.Pool{
+	// Pool pour FixedParams au lieu de map[string]string
+	fixedParamsPool = sync.Pool{
 		New: func() interface{} {
-			return make(map[string]string, 4)
+			return &FixedParams{}
+		},
+	}
+
+	// Pool pour les clés de cache
+	cacheKeyPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 0, 64)
 		},
 	}
 
@@ -53,20 +155,34 @@ var (
 		},
 	}
 
-	cacheEntryPool = sync.Pool{
+	// Pool pour les Context
+	contextPool = sync.Pool{
 		New: func() interface{} {
-			return &routeCacheEntry{
-				params: make(map[string]string, 4),
-			}
+			return &types.Context{}
 		},
 	}
 )
 
+// === FONCTIONS UTILITAIRES ===
+
+func getCacheKey(method, path string) string {
+	buf := cacheKeyPool.Get().([]byte)
+	buf = buf[:0]
+	buf = append(buf, method...)
+	buf = append(buf, ':')
+	buf = append(buf, path...)
+	key := string(buf)
+	cacheKeyPool.Put(buf)
+	return key
+}
+
+// === IMPLÉMENTATION OPTIMISÉE ===
+
 func New() *Router {
 	return &Router{
-		trees:      make(map[string]*node, 16),
-		routeCache: make(map[string]*routeCacheEntry, 1024),
-		cacheSize:  1024,
+		trees:     make(map[string]*node, 16),
+		cache:     newLockFreeCache(),
+		cacheSize: 1024,
 	}
 }
 
@@ -176,30 +292,36 @@ func (r *Router) findOrCreateChild(parent *node, part string) *node {
 	return child
 }
 
+// === HANDLER OPTIMISÉ ===
+
 func (r *Router) Handler() fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
+		// Réutiliser Context via pool
+		c := contextPool.Get().(*types.Context)
+		c.RequestCtx = ctx
+		defer func() {
+			c.RequestCtx = nil
+			contextPool.Put(c)
+		}()
+
 		method := ctx.Method()
 		path := ctx.Path()
 
 		methodStr := bytesToString(method)
 		pathStr := bytesToString(path)
 
-		cacheKey := methodStr + ":" + pathStr
+		cacheKey := getCacheKey(methodStr, pathStr)
 
-		r.cacheMu.RLock()
-		if cached, exists := r.routeCache[cacheKey]; exists {
-			r.cacheMu.RUnlock()
-
+		// Vérifier le cache lock-free
+		if cached, exists := r.cache.Get(cacheKey); exists {
 			if cached.node != nil && cached.node.handler != nil {
-				c := &types.Context{RequestCtx: ctx}
-				if len(cached.params) > 0 {
-					ctx.SetUserValue("params", cached.params)
+				if cached.params != nil && cached.params.count > 0 {
+					ctx.SetUserValue("params", cached.params.ToMap())
 				}
 				cached.node.handler(c)
 				return
 			}
 		}
-		r.cacheMu.RUnlock()
 
 		n := r.trees[methodStr]
 		if n == nil {
@@ -209,18 +331,18 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 
 		if len(path) <= 1 {
 			if n.handler != nil {
-				c := &types.Context{RequestCtx: ctx}
 				n.handler(c)
-				// Mettre en cache
-				r.cacheRoute(cacheKey, n, nil)
+				r.cache.Set(cacheKey, n, nil)
 				return
 			}
 			ctx.Error("Not Found", fasthttp.StatusNotFound)
 			return
 		}
 
-		params := paramsPool.Get().(map[string]string)
-		defer r.releaseParams(params)
+		// Utiliser FixedParams au lieu de map
+		params := fixedParamsPool.Get().(*FixedParams)
+		params.Reset()
+		defer fixedParamsPool.Put(params)
 
 		matched := r.matchPathOptimized(n, path[1:], params)
 		if matched == nil || matched.handler == nil {
@@ -228,20 +350,20 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 			return
 		}
 
-		c := &types.Context{RequestCtx: ctx}
-		if len(params) > 0 {
-			ctx.SetUserValue("params", params)
+		if params.count > 0 {
+			ctx.SetUserValue("params", params.ToMap())
 		}
 
-		if len(params) == 0 {
-			r.cacheRoute(cacheKey, matched, nil)
+		// Mettre en cache seulement les routes sans paramètres pour éviter les collisions
+		if params.count == 0 {
+			r.cache.Set(cacheKey, matched, nil)
 		}
 
 		matched.handler(c)
 	}
 }
 
-func (r *Router) matchPathOptimized(n *node, path []byte, params map[string]string) *node {
+func (r *Router) matchPathOptimized(n *node, path []byte, params *FixedParams) *node {
 	if len(path) == 0 {
 		return n
 	}
@@ -265,47 +387,16 @@ func (r *Router) matchPathOptimized(n *node, path []byte, params map[string]stri
 
 	if n.paramChild != nil {
 		paramName := n.paramChild.part[1:]
-		params[paramName] = segmentStr
+		params.Set(paramName, segmentStr)
 		return r.matchPathOptimized(n.paramChild, remaining, params)
 	}
 
 	if n.wildcardChild != nil {
-		params["*"] = bytesToString(path)
+		params.Set("*", bytesToString(path))
 		return n.wildcardChild
 	}
 
 	return nil
-}
-
-func (r *Router) cacheRoute(key string, node *node, params map[string]string) {
-	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
-
-	if len(r.routeCache) >= r.cacheSize {
-		// Simple éviction: supprimer une entrée aléatoire
-		for k := range r.routeCache {
-			delete(r.routeCache, k)
-			break
-		}
-	}
-
-	entry := cacheEntryPool.Get().(*routeCacheEntry)
-	entry.node = node
-
-	if len(params) > 0 {
-		for k, v := range params {
-			entry.params[k] = v
-		}
-	}
-
-	r.routeCache[key] = entry
-}
-
-func (r *Router) releaseParams(params map[string]string) {
-	for k := range params {
-		delete(params, k)
-	}
-	paramsPool.Put(params)
 }
 
 func bytesToString(b []byte) string {

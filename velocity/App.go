@@ -2,6 +2,7 @@ package velocity
 
 import (
 	"log"
+	"sync"
 	"time"
 
 	"github.com/juven0/Velocity/internal/router"
@@ -9,6 +10,13 @@ import (
 
 	"github.com/valyala/fasthttp"
 )
+
+// Pool pour réutiliser les Context
+var contextPool = sync.Pool{
+	New: func() interface{} {
+		return &types.Context{}
+	},
+}
 
 type App struct {
 	router      *router.Router
@@ -36,17 +44,18 @@ func New() *App {
 	}
 }
 
+// Configuration optimisée pour la performance
 func defaultConfig() *ServerConfig {
 	return &ServerConfig{
-		ReadBufferSize:                16384,
-		WriteBufferSize:               16384,
-		MaxRequestBodySize:            1024 * 1024,
-		Concurrency:                   1024 * 1024,
+		ReadBufferSize:                64 * 1024,        // Augmenté pour de meilleures performances
+		WriteBufferSize:               64 * 1024,        // Augmenté pour de meilleures performances
+		MaxRequestBodySize:            10 * 1024 * 1024, // 10MB
+		Concurrency:                   256 * 1024,       // Optimisé pour éviter le thrashing
 		DisableKeepalive:              false,
 		DisableHeaderNamesNormalizing: true,
-		ReadTimeout:                   10 * time.Second,
-		WriteTimeout:                  10 * time.Second,
-		IdleTimeout:                   120 * time.Second,
+		ReadTimeout:                   5 * time.Second,  // Réduit pour de meilleures performances
+		WriteTimeout:                  5 * time.Second,  // Réduit pour de meilleures performances
+		IdleTimeout:                   60 * time.Second, // Réduit
 	}
 }
 
@@ -86,6 +95,7 @@ func (a *App) Head(path string, handler types.HandlerFunc) {
 	a.router.Handel("HEAD", path, handler)
 }
 
+// Chain middleware - optimisé pour éviter les allocations inutiles
 func (a *App) chain(final types.HandlerFunc) types.HandlerFunc {
 	if len(a.middlewares) == 0 {
 		return final
@@ -113,13 +123,39 @@ func (a *App) chain(final types.HandlerFunc) types.HandlerFunc {
 	}
 }
 
+// Handler optimisé avec pool de Context
 func (a *App) Handler() fasthttp.RequestHandler {
 	routerHandler := a.router.Handler()
 
-	return func(ctx *fasthttp.RequestCtx) {
-		ctx.Response.Header.SetServer("Velocity")
+	// Si pas de middleware, utiliser directement le router
+	if len(a.middlewares) == 0 {
+		return func(ctx *fasthttp.RequestCtx) {
+			// Optimisation: éviter l'allocation de string
+			ctx.Response.Header.SetServerBytes([]byte("Velocity"))
+			routerHandler(ctx)
+		}
+	}
 
-		routerHandler(ctx)
+	// Avec middlewares
+	return func(ctx *fasthttp.RequestCtx) {
+		ctx.Response.Header.SetServerBytes([]byte("Velocity"))
+
+		// Utiliser le pool de Context
+		c := contextPool.Get().(*types.Context)
+		c.RequestCtx = ctx
+		defer func() {
+			c.RequestCtx = nil // éviter les fuites mémoire
+			contextPool.Put(c)
+		}()
+
+		// Appliquer les middlewares
+		handler := a.chain(func(c *types.Context) error {
+			// Cette partie sera gérée par le router directement
+			routerHandler(ctx)
+			return nil
+		})
+
+		handler(c)
 	}
 }
 
@@ -137,8 +173,12 @@ func (a *App) Listen(addr string) error {
 		ReadTimeout:                   a.config.ReadTimeout,
 		WriteTimeout:                  a.config.WriteTimeout,
 		IdleTimeout:                   a.config.IdleTimeout,
-		ReduceMemoryUsage:             false,
+		ReduceMemoryUsage:             false, // false pour de meilleures performances
 		TCPKeepalive:                  true,
+		// Nouvelles optimisations
+		NoDefaultServerHeader: true, // On set notre propre header
+		NoDefaultDate:         true, // Éviter la génération automatique de Date
+		NoDefaultContentType:  true, // Laisser l'application gérer le Content-Type
 	}
 
 	log.Printf("Server starting on %s with %d max goroutines", addr, a.config.Concurrency)
