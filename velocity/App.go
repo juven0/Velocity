@@ -47,10 +47,10 @@ func New() *App {
 // Configuration optimisée pour la performance
 func defaultConfig() *ServerConfig {
 	return &ServerConfig{
-		ReadBufferSize:                64 * 1024,        // Augmenté pour de meilleures performances
-		WriteBufferSize:               64 * 1024,        // Augmenté pour de meilleures performances
+		ReadBufferSize:                16384,            // Augmenté pour de meilleures performances
+		WriteBufferSize:               16384,            // Augmenté pour de meilleures performances
 		MaxRequestBodySize:            10 * 1024 * 1024, // 10MB
-		Concurrency:                   256 * 1024,       // Optimisé pour éviter le thrashing
+		Concurrency:                   1024 * 1024,      // Optimisé pour éviter le thrashing
 		DisableKeepalive:              false,
 		DisableHeaderNamesNormalizing: true,
 		ReadTimeout:                   5 * time.Second,  // Réduit pour de meilleures performances
