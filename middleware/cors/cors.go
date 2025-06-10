@@ -1,5 +1,7 @@
 package cors
 
+import "github.com/juven0/Velocity/types"
+
 type Option struct {
 	AllowedOrigin       []string
 	AllowedMethode      []string
@@ -7,19 +9,8 @@ type Option struct {
 	AllowedCrendentials bool
 }
 
-type Cors struct {
-	AllowedOrigin      []string
-	AllowedMethode     []string
-	AllwoedHeader      []string
-	AllowedCredentials bool
-}
-
-func New(option Option) *Cors {
-	c := &Cors{
-		AllowedOrigin:      option.AllowedOrigin,
-		AllowedMethode:     option.AllowedMethode,
-		AllwoedHeader:      option.AllowedHeader,
-		AllowedCredentials: option.AllowedCrendentials,
+func New(option Option) types.HandlerFunc {
+	return func(ctx types.Context) error {
+		return ctx.Next()
 	}
-	return c
 }
