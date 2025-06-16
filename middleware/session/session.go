@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/valyala/fasthttp"
 )
 
 type Session struct {
@@ -21,7 +23,17 @@ type MemoryStore struct {
 	mutex    sync.RWMutex
 }
 
-type SssionConfig struct{}
+type SesionConfig struct {
+	Store       MemoryStore
+	CookiName   string
+	CookiPath   string
+	cookiDomain string
+	MaxAge      time.Duration
+	Secure      bool
+	HTTPOnly    bool
+	SameSite    fasthttp.CookieSameSite
+	GCInterval  time.Duration
+}
 
 func generateSID() string {
 	bytes := make([]byte, 32)
