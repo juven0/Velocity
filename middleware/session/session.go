@@ -21,6 +21,8 @@ type MemoryStore struct {
 	mutex    sync.RWMutex
 }
 
+type SssionConfig struct{}
+
 func generateSID() string {
 	bytes := make([]byte, 32)
 	rand.Read(bytes)
@@ -51,3 +53,17 @@ func (ms *MemoryStore) Set(session *Session) error {
 	ms.sessions[session.ID] = session
 	return nil
 }
+
+func (s *Session) CreateSession(userID string, store MemoryStore) (*Session, error) {
+	session := &Session{
+		ID:        generateSID(),
+		Data:      make(map[string]interface{}),
+		CreatedAt: time.Now(),
+		UpdateAt:  time.Now(),
+		ExpiredAt: time.Now().Add(24 * time.Hour),
+	}
+	err := store.Set(session)
+	return session, err
+}
+
+func (s *Session) GetSession(ID string) (*Session, error) {}
