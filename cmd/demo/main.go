@@ -1,12 +1,15 @@
 package main
 
 import (
+	"github.com/juven0/Velocity/middleware/cors"
 	"github.com/juven0/Velocity/types"
 	"github.com/juven0/Velocity/velocity"
 )
 
 func main() {
 	app := velocity.New()
+
+	app.Use(cors.New())
 
 	app.Get("/demo", func(ctx *types.Context) error {
 		return ctx.Text("GET /demo")
