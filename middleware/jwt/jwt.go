@@ -23,6 +23,14 @@ const (
 	CookieJWT LookUpMethode = "cookie:jwt"
 )
 
+type JWTError string
+
+const (
+	SingVerifFaildError     JWTError = "signature verification failed"
+	InvalidTokenFormatError JWTError = "invalid token format"
+	SignVerificationError   JWTError = "signature verification failed"
+)
+
 type SigninMethod string
 
 const (
@@ -169,4 +177,100 @@ func (j *JWTManager) GenerateToken(claims Claims) (string, error) {
 
 	token := message + "." + signature
 	return token, nil
+}
+
+func (j *JWTManager) ParsToken(tokenString string) (*Token, error) {
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return nil, errors.New(string(InvalidTokenFormatError))
+	}
+
+	headerPart, claimsPart, signaturePart := parts[0], parts[1], parts[2]
+	
+	message := headerPart + "." + claimsPart
+	if err := j.verify(message, signaturePart); err != nil {
+		return nil, fmt.Errorf("%w: %w",SignVerificationError, err)
+	}
+
+	headerData, err := base64URLDecode(headerPart)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode header: %w", err)
+	}
+	
+	var header Header
+	if err := json.Unmarshal(headerData, &header); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal header: %w", err)
+	}
+	
+	if header.Algorithm != string(j.Config.SigninMethode) {
+		return nil, errors.New("algorithm mismatch")
+	}
+	
+	claimsData, err := base64URLDecode(claimsPart)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode claims: %w", err)
+	}
+	
+	var claims Claims
+	if err := json.Unmarshal(claimsData, &claims); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal claims: %w", err)
+	}
+	
+	now := time.Now().Unix()
+	
+	if claims.ExpirationTime > 0 && claims.ExpirationTime < now {
+		return &Token{
+			Header:    header,
+			Claims:    claims,
+			Signature: signaturePart,
+			Raw:       tokenString,
+			Valid:     false,
+		}, errors.New("token is expired")
+	}
+	
+	if claims.NotBefore > 0 && claims.NotBefore > now {
+		return &Token{
+			Header:    header,
+			Claims:    claims,
+			Signature: signaturePart,
+			Raw:       tokenString,
+			Valid:     false,
+		}, errors.New("token used before valid")
+	}
+	
+	return &Token{
+		Header:    header,
+		Claims:    claims,
+		Signature: signaturePart,
+		Raw:       tokenString,
+		Valid:     true,
+	}, nil
+}
+func (j *JWTManager) extractToken(ctx *types.Context)(string, error){
+	parts := strings.Split(j.Config.TokenLookUp , ":")
+
+	if len(parts) != 2 {
+		return nil, errors.New("invalid token lookup format")
+	}
+
+	method, key := parts[0], parts[1]
+
+	switch method {
+	case "header":
+		authHeader := string(ctx.Request.Header.Peek(key))
+
+		if authHeader == "" {
+			return "", errors.New("missing authorization header")
+		 }
+		if strings.HasPrefix(authHeader, "Bearer "){
+			return strings.TrimPrefix(authHeader, "Bearer ") , nil
+		}
+		return authHeader, nil
+	case "query"
+	}
+}
+func (j *JWTManager) Middleware() types.HandlerFunc{
+	return func(ctx *types.Context) error{
+		tokenString, err := j.
+	}
 }
