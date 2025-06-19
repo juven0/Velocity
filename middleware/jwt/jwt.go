@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"hash"
 	"strings"
 	"time"
@@ -134,8 +136,37 @@ func (j *JWTManager) GenerateToken(claims Claims) (string, error) {
 	}
 
 	now := time.Now()
+	if claims.IssuedAt == 0 {
+		claims.IssuedAt = now.Unix()
+	}
 
 	if claims.ExpirationTime == 0 {
-		claims.ExpirationTime = now.Add()
+		claims.ExpirationTime = now.Add(j.Config.TokenExpiration).Unix()
 	}
+
+	if claims.Issuer == "" && j.Config.Issuer != "" {
+		claims.Issuer = j.Config.Issuer
+	}
+
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal header: %w", err)
+	}
+	headerEncoded := base64URLEncode(headerJSON)
+
+	claimsJSON, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal claims: %w", err)
+	}
+	claimsEncoded := base64URLEncode(claimsJSON)
+
+	message := headerEncoded + "." + claimsEncoded
+
+	signature, err := j.sign(message)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign token: %w", err)
+	}
+
+	token := message + "." + signature
+	return token, nil
 }
