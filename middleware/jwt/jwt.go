@@ -186,38 +186,38 @@ func (j *JWTManager) ParsToken(tokenString string) (*Token, error) {
 	}
 
 	headerPart, claimsPart, signaturePart := parts[0], parts[1], parts[2]
-	
+
 	message := headerPart + "." + claimsPart
 	if err := j.verify(message, signaturePart); err != nil {
-		return nil, fmt.Errorf("%w: %w",SignVerificationError, err)
+		return nil, fmt.Errorf("%w: %w", SignVerificationError, err)
 	}
 
 	headerData, err := base64URLDecode(headerPart)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode header: %w", err)
 	}
-	
+
 	var header Header
 	if err := json.Unmarshal(headerData, &header); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal header: %w", err)
 	}
-	
+
 	if header.Algorithm != string(j.Config.SigninMethode) {
 		return nil, errors.New("algorithm mismatch")
 	}
-	
+
 	claimsData, err := base64URLDecode(claimsPart)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode claims: %w", err)
 	}
-	
+
 	var claims Claims
 	if err := json.Unmarshal(claimsData, &claims); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal claims: %w", err)
 	}
-	
+
 	now := time.Now().Unix()
-	
+
 	if claims.ExpirationTime > 0 && claims.ExpirationTime < now {
 		return &Token{
 			Header:    header,
@@ -227,7 +227,7 @@ func (j *JWTManager) ParsToken(tokenString string) (*Token, error) {
 			Valid:     false,
 		}, errors.New("token is expired")
 	}
-	
+
 	if claims.NotBefore > 0 && claims.NotBefore > now {
 		return &Token{
 			Header:    header,
@@ -237,7 +237,7 @@ func (j *JWTManager) ParsToken(tokenString string) (*Token, error) {
 			Valid:     false,
 		}, errors.New("token used before valid")
 	}
-	
+
 	return &Token{
 		Header:    header,
 		Claims:    claims,
@@ -246,11 +246,12 @@ func (j *JWTManager) ParsToken(tokenString string) (*Token, error) {
 		Valid:     true,
 	}, nil
 }
-func (j *JWTManager) extractToken(ctx *types.Context)(string, error){
-	parts := strings.Split(j.Config.TokenLookUp , ":")
+
+func (j *JWTManager) extractToken(ctx *types.Context) (string, error) {
+	parts := strings.Split(string(j.Config.TokenLookUp), ":")
 
 	if len(parts) != 2 {
-		return nil, errors.New("invalid token lookup format")
+		return "", errors.New("invalid token lookup format")
 	}
 
 	method, key := parts[0], parts[1]
@@ -261,16 +262,58 @@ func (j *JWTManager) extractToken(ctx *types.Context)(string, error){
 
 		if authHeader == "" {
 			return "", errors.New("missing authorization header")
-		 }
-		if strings.HasPrefix(authHeader, "Bearer "){
-			return strings.TrimPrefix(authHeader, "Bearer ") , nil
+		}
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			return strings.TrimPrefix(authHeader, "Bearer "), nil
 		}
 		return authHeader, nil
-	case "query"
+	case "query":
+		token := string(ctx.Request.URI().QueryArgs().Peek(key))
+		if token == "" {
+			return "", errors.New("missing token in query")
+		}
+		return token, nil
+
+	case "cookie":
+		cookie := string(ctx.Request.Header.Cookie(key))
+		if cookie == "" {
+			return "", errors.New("missing token in cookie")
+		}
+		return cookie, nil
+	default:
+		return "", errors.New("unsupported token lookup method")
 	}
 }
-func (j *JWTManager) Middleware() types.HandlerFunc{
-	return func(ctx *types.Context) error{
-		tokenString, err := j.
+
+func (j *JWTManager) Middleware() types.HandlerFunc {
+	return func(ctx *types.Context) error {
+		tokenString, err := j.extractToken(ctx)
+		if err != nil {
+			if j.Config.ErrorHandler != nil {
+				return j.Config.ErrorHandler(ctx, err)
+			}
+			ctx.SetStatus(401)
+			return ctx.JSON(map[string]string{"error": "Unauthorized: " + err.Error()})
+		}
+
+		token, err := j.ParsToken(tokenString)
+
+		if err != nil || !token.Valid {
+			if j.Config.ErrorHandler != nil {
+				return j.Config.ErrorHandler(ctx, err)
+			}
+			ctx.SetStatus(401)
+			return ctx.JSON(map[string]string{"error": "Invalid token"})
+		}
+
+		// ctx.Set(j.Config.ContextKey, token.Claims)
+
+		if j.Config.SuccessHandler != nil {
+			if err := j.Config.SuccessHandler(ctx); err != nil {
+				return err
+			}
+		}
+
+		return ctx.Next()
 	}
 }
