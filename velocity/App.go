@@ -11,7 +11,6 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-// Pool pour réutiliser les Context
 var contextPool = sync.Pool{
 	New: func() interface{} {
 		return &types.Context{}
@@ -47,15 +46,15 @@ func New() *App {
 // Configuration optimisée pour la performance
 func defaultConfig() *ServerConfig {
 	return &ServerConfig{
-		ReadBufferSize:                16384,            // Augmenté pour de meilleures performances
-		WriteBufferSize:               16384,            // Augmenté pour de meilleures performances
-		MaxRequestBodySize:            10 * 1024 * 1024, // 10MB
-		Concurrency:                   1024 * 1024,      // Optimisé pour éviter le thrashing
+		ReadBufferSize:                16384,            
+		WriteBufferSize:               16384,            
+		MaxRequestBodySize:            10 * 1024 * 1024, 
+		Concurrency:                   1024 * 1024,      
 		DisableKeepalive:              false,
 		DisableHeaderNamesNormalizing: true,
-		ReadTimeout:                   5 * time.Second,  // Réduit pour de meilleures performances
-		WriteTimeout:                  5 * time.Second,  // Réduit pour de meilleures performances
-		IdleTimeout:                   60 * time.Second, // Réduit
+		ReadTimeout:                   5 * time.Second,  
+		WriteTimeout:                  5 * time.Second,  
+		IdleTimeout:                   60 * time.Second, 
 	}
 }
 
@@ -123,7 +122,6 @@ func (a *App) chain(final types.HandlerFunc) types.HandlerFunc {
 	}
 }
 
-// Handler optimisé avec pool de Context
 func (a *App) Handler() fasthttp.RequestHandler {
 	routerHandler := a.router.Handler()
 
@@ -136,7 +134,6 @@ func (a *App) Handler() fasthttp.RequestHandler {
 		}
 	}
 
-	// Avec middlewares
 	return func(ctx *fasthttp.RequestCtx) {
 		ctx.Response.Header.SetServerBytes([]byte("Velocity"))
 
@@ -148,7 +145,6 @@ func (a *App) Handler() fasthttp.RequestHandler {
 			contextPool.Put(c)
 		}()
 
-		// Appliquer les middlewares
 		handler := a.chain(func(c *types.Context) error {
 			// Cette partie sera gérée par le router directement
 			routerHandler(ctx)
@@ -175,10 +171,9 @@ func (a *App) Listen(addr string) error {
 		IdleTimeout:                   a.config.IdleTimeout,
 		ReduceMemoryUsage:             false, // false pour de meilleures performances
 		TCPKeepalive:                  true,
-		// Nouvelles optimisations
-		NoDefaultServerHeader: true, // On set notre propre header
-		NoDefaultDate:         true, // Éviter la génération automatique de Date
-		NoDefaultContentType:  true, // Laisser l'application gérer le Content-Type
+		NoDefaultServerHeader: true, 
+		NoDefaultDate:         true,
+		NoDefaultContentType:  true, 
 	}
 
 	log.Printf("Server starting on %s with %d max goroutines", addr, a.config.Concurrency)
