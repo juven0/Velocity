@@ -10,9 +10,6 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-// === NOUVELLES STRUCTURES OPTIMISÉES ===
-
-// FixedParams remplace map[string]string pour éviter les allocations
 type FixedParams struct {
 	keys   [8]string
 	values [8]string
@@ -38,7 +35,6 @@ func (fp *FixedParams) Get(key string) (string, bool) {
 
 func (fp *FixedParams) Reset() {
 	fp.count = 0
-	// Pas besoin de clear les arrays, on utilise count
 }
 
 func (fp *FixedParams) ToMap() map[string]string {
@@ -52,7 +48,6 @@ func (fp *FixedParams) ToMap() map[string]string {
 	return m
 }
 
-// lockFreeCache remplace le cache avec mutex
 type lockFreeCache struct {
 	entries [1024]*routeCacheEntry
 	mask    uint32
@@ -98,14 +93,11 @@ func (lfc *lockFreeCache) Set(key string, node *node, params *FixedParams) {
 	lfc.entries[idx] = entry
 }
 
-// Fonction de hash simple et rapide
 func hashString(s string) uint32 {
 	h := fnv.New32a()
 	h.Write([]byte(s))
 	return h.Sum32()
 }
-
-// === STRUCTURES EXISTANTES MODIFIÉES ===
 
 type node struct {
 	part           string
@@ -123,7 +115,7 @@ type HandlerFunc = types.HandlerFunc
 
 type Router struct {
 	trees     map[string]*node
-	cache     *lockFreeCache // Remplace routeCache + cacheMu
+	cache     *lockFreeCache 
 	cacheSize int
 }
 
@@ -132,17 +124,13 @@ type Groupe struct {
 	router *Router
 }
 
-// === POOLS OPTIMISÉS ===
-
 var (
-	// Pool pour FixedParams au lieu de map[string]string
 	fixedParamsPool = sync.Pool{
 		New: func() interface{} {
 			return &FixedParams{}
 		},
 	}
-
-	// Pool pour les clés de cache
+	
 	cacheKeyPool = sync.Pool{
 		New: func() interface{} {
 			return make([]byte, 0, 64)
@@ -155,15 +143,12 @@ var (
 		},
 	}
 
-	// Pool pour les Context
 	contextPool = sync.Pool{
 		New: func() interface{} {
 			return &types.Context{}
 		},
 	}
 )
-
-// === FONCTIONS UTILITAIRES ===
 
 func getCacheKey(method, path string) string {
 	buf := cacheKeyPool.Get().([]byte)
@@ -175,8 +160,6 @@ func getCacheKey(method, path string) string {
 	cacheKeyPool.Put(buf)
 	return key
 }
-
-// === IMPLÉMENTATION OPTIMISÉE ===
 
 func New() *Router {
 	return &Router{
@@ -292,11 +275,8 @@ func (r *Router) findOrCreateChild(parent *node, part string) *node {
 	return child
 }
 
-// === HANDLER OPTIMISÉ ===
-
 func (r *Router) Handler() fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
-		// Réutiliser Context via pool
 		c := contextPool.Get().(*types.Context)
 		c.RequestCtx = ctx
 		defer func() {
@@ -312,7 +292,6 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 
 		cacheKey := getCacheKey(methodStr, pathStr)
 
-		// Vérifier le cache lock-free
 		if cached, exists := r.cache.Get(cacheKey); exists {
 			if cached.node != nil && cached.node.handler != nil {
 				if cached.params != nil && cached.params.count > 0 {
@@ -338,8 +317,6 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 			ctx.Error("Not Found", fasthttp.StatusNotFound)
 			return
 		}
-
-		// Utiliser FixedParams au lieu de map
 		params := fixedParamsPool.Get().(*FixedParams)
 		params.Reset()
 		defer fixedParamsPool.Put(params)
@@ -353,8 +330,7 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 		if params.count > 0 {
 			ctx.SetUserValue("params", params.ToMap())
 		}
-
-		// Mettre en cache seulement les routes sans paramètres pour éviter les collisions
+		
 		if params.count == 0 {
 			r.cache.Set(cacheKey, matched, nil)
 		}
@@ -430,8 +406,6 @@ func (r *Router) OPTIONS(path string, handler HandlerFunc) {
 func (r *Router) HEAD(path string, handler HandlerFunc) {
 	r.Handel("HEAD", path, handler)
 }
-
-// Méthodes pour les groupes
 func (g *Groupe) GET(path string, handler HandlerFunc) {
 	g.Handel("GET", path, handler)
 }
