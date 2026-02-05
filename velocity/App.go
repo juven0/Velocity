@@ -125,10 +125,8 @@ func (a *App) chain(final types.HandlerFunc) types.HandlerFunc {
 func (a *App) Handler() fasthttp.RequestHandler {
 	routerHandler := a.router.Handler()
 
-	// Si pas de middleware, utiliser directement le router
 	if len(a.middlewares) == 0 {
 		return func(ctx *fasthttp.RequestCtx) {
-			// Optimisation: éviter l'allocation de string
 			ctx.Response.Header.SetServerBytes([]byte("Velocity"))
 			routerHandler(ctx)
 		}
@@ -141,12 +139,11 @@ func (a *App) Handler() fasthttp.RequestHandler {
 		c := contextPool.Get().(*types.Context)
 		c.RequestCtx = ctx
 		defer func() {
-			c.RequestCtx = nil // éviter les fuites mémoire
+			c.RequestCtx = nil 
 			contextPool.Put(c)
 		}()
 
 		handler := a.chain(func(c *types.Context) error {
-			// Cette partie sera gérée par le router directement
 			routerHandler(ctx)
 			return nil
 		})

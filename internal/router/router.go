@@ -114,7 +114,7 @@ type HandlerFunc = types.HandlerFunc
 
 type Router struct {
 	trees     map[string]*node
-	cache     *lockFreeCache // Remplace routeCache + cacheMu
+	cache     *lockFreeCache 
 	cacheSize int
 }
 
@@ -318,7 +318,6 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 			return
 		}
 
-		// Utiliser FixedParams au lieu de map
 		params := fixedParamsPool.Get().(*FixedParams)
 		params.Reset()
 		defer fixedParamsPool.Put(params)
@@ -333,7 +332,6 @@ func (r *Router) Handler() fasthttp.RequestHandler {
 			ctx.SetUserValue("params", params.ToMap())
 		}
 
-		// Mettre en cache seulement les routes sans paramètres pour éviter les collisions
 		if params.count == 0 {
 			r.cache.Set(cacheKey, matched, nil)
 		}
